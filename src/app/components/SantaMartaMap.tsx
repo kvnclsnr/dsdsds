@@ -231,8 +231,8 @@ export function SantaMartaMap({
               [pB.lat, pB.lng],
             ];
             const maxAllowedDist = Math.max(
-              straightDist * 1.35,
-              straightDist + 35,
+              straightDist * 1.7,
+              straightDist + 90,
             );
 
             if (routeAB && routeBA) {
@@ -248,7 +248,7 @@ export function SantaMartaMap({
               const bothReasonable =
                 routeAB.distance <= maxAllowedDist &&
                 routeBA.distance <= maxAllowedDist;
-              const closeEnough = distDiff <= 35;
+              const closeEnough = distDiff <= 140;
               const similarRatio =
                 Math.max(routeAB.distance, routeBA.distance) /
                   Math.max(
@@ -258,47 +258,30 @@ export function SantaMartaMap({
                       routeBA.distance,
                     ),
                   ) <=
-                1.12;
+                1.35;
 
               if (bothReasonable && closeEnough && similarRatio) {
                 const centerline = buildCenterline(
                   abCoords,
                   baCoords,
                 );
-                if (
-                  isCenterlineStable(
-                    centerline,
-                    abCoords,
-                    baCoords,
-                    straightDist,
-                  )
-                ) {
-                  coords = centerline;
-                }
+                const centerIsStable = isCenterlineStable(
+                  centerline,
+                  abCoords,
+                  baCoords,
+                  straightDist,
+                );
+                coords = centerIsStable ? centerline : abCoords;
               } else {
                 const chooseAB =
                   routeAB.distance <= routeBA.distance;
                 const best = chooseAB ? routeAB : routeBA;
-                const bestReasonable =
-                  best.distance <=
-                  Math.max(
-                    straightDist * 1.18,
-                    straightDist + 25,
-                  );
-                if (bestReasonable) {
-                  coords = toLatLng(best.geometry.coordinates);
-                  if (!chooseAB) coords.reverse();
-                }
+                coords = toLatLng(best.geometry.coordinates);
+                if (!chooseAB) coords.reverse();
               }
-            } else if (
-              routeAB &&
-              routeAB.distance <= maxAllowedDist
-            ) {
+            } else if (routeAB) {
               coords = toLatLng(routeAB.geometry.coordinates);
-            } else if (
-              routeBA &&
-              routeBA.distance <= maxAllowedDist
-            ) {
+            } else if (routeBA) {
               coords = toLatLng(
                 routeBA.geometry.coordinates,
               ).reverse();
