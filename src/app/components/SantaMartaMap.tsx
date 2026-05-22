@@ -143,9 +143,12 @@ export function SantaMartaMap({
           );
 
           const commonQs =
-            "geometries=geojson&overview=full&alternatives=false&steps=false&continue_straight=true";
-          const urlAB = `https://router.project-osrm.org/route/v1/driving/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?${commonQs}`;
-          const urlBA = `https://router.project-osrm.org/route/v1/driving/${pB.lng},${pB.lat};${pA.lng},${pA.lat}?${commonQs}`;
+            "geometries=geojson&overview=full&alternatives=false&steps=false";
+          // En modo ambos carriles usamos el perfil `foot` para ignorar sentidos de circulación
+          // y quedarnos con la geometría física de la vía (evita retornos por one-way).
+          const profile = "foot";
+          const urlAB = `https://router.project-osrm.org/route/v1/${profile}/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?${commonQs}`;
+          const urlBA = `https://router.project-osrm.org/route/v1/${profile}/${pB.lng},${pB.lat};${pA.lng},${pA.lat}?${commonQs}`;
           try {
             const [resAB, resBA] = await Promise.all([
               fetch(urlAB),
