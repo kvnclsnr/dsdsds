@@ -89,6 +89,60 @@ export function SantaMartaMap({
     ]);
   };
 
+  const distMeters = (
+    a: [number, number],
+    b: [number, number],
+  ) => {
+    const [lat1, lon1] = a;
+    const [lat2, lon2] = b;
+    const R = 6371e3;
+    const p1 = (lat1 * Math.PI) / 180;
+    const p2 = (lat2 * Math.PI) / 180;
+    const dp = ((lat2 - lat1) * Math.PI) / 180;
+    const dl = ((lon2 - lon1) * Math.PI) / 180;
+    const h =
+      Math.sin(dp / 2) ** 2 +
+      Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+    return R * (2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h)));
+  };
+
+  const routeLengthMeters = (route: [number, number][]) => {
+    let total = 0;
+    for (let i = 1; i < route.length; i++) {
+      total += distMeters(route[i - 1], route[i]);
+    }
+    return total;
+  };
+
+  const isCenterlineStable = (
+    centerline: [number, number][],
+    routeAB: [number, number][],
+    routeBA: [number, number][],
+    straightDist: number,
+  ) => {
+    if (centerline.length < 2) return false;
+    const centerLen = routeLengthMeters(centerline);
+    if (centerLen > Math.max(straightDist * 1.45, straightDist + 45)) {
+      return false;
+    }
+
+    const targetLen = Math.max(routeAB.length, routeBA.length, 12);
+    const abNorm = interpolateRoute(routeAB, targetLen);
+    const baNorm = interpolateRoute([...routeBA].reverse(), targetLen);
+    let avgSep = 0;
+    let maxSep = 0;
+    for (let i = 0; i < targetLen; i++) {
+      const sep = distMeters(abNorm[i], baNorm[i]);
+      avgSep += sep;
+      if (sep > maxSep) maxSep = sep;
+    }
+    avgSep /= targetLen;
+
+    // Si las dos rutas están demasiado separadas, no representan dos carriles de la misma vía
+    // y el promedio genera trayectos raros.
+    return avgSep <= 45 && maxSep <= 85;
+  };
+
   useEffect(() => {
     window.dispatchEvent(new Event("resize"));
   }, []);
@@ -147,9 +201,9 @@ export function SantaMartaMap({
 
           const commonQs =
             "geometries=geojson&overview=full&alternatives=false&steps=false";
-          // En modo ambos carriles usamos el perfil `foot` para ignorar sentidos de circulación
-          // y quedarnos con la geometría física de la vía (evita retornos por one-way).
-          const profile = "foot";
+          // En modo ambos carriles consultamos driving en ambos sentidos
+          // para capturar cada calzada y luego calcular una línea media estable.
+          const profile = "driving";
           const urlAB = `https://router.project-osrm.org/route/v1/${profile}/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?${commonQs}`;
           const urlBA = `https://router.project-osrm.org/route/v1/${profile}/${pB.lng},${pB.lat};${pA.lng},${pA.lat}?${commonQs}`;
 
@@ -206,12 +260,21 @@ export function SantaMartaMap({
                   ) <=
                 1.12;
 
-              if (
-                bothReasonable &&
-                closeEnough &&
-                similarRatio
-              ) {
-                coords = buildCenterline(abCoords, baCoords);
+              if (bothReasonable && closeEnough && similarRatio) {
+                const centerline = buildCenterline(
+                  abCoords,
+                  baCoords,
+                );
+                if (
+                  isCenterlineStable(
+                    centerline,
+                    abCoords,
+                    baCoords,
+                    straightDist,
+                  )
+                ) {
+                  coords = centerline;
+                }
               } else {
                 const chooseAB =
                   routeAB.distance <= routeBA.distance;
