@@ -76,7 +76,10 @@ export function SantaMartaMap({
     routeBA: [number, number][],
   ): [number, number][] => {
     const baForward = [...routeBA].reverse();
-    const targetLen = Math.max(routeAB.length, baForward.length);
+    const targetLen = Math.max(
+      routeAB.length,
+      baForward.length,
+    );
     const abNorm = interpolateRoute(routeAB, targetLen);
     const baNorm = interpolateRoute(baForward, targetLen);
 
@@ -149,6 +152,7 @@ export function SantaMartaMap({
           const profile = "foot";
           const urlAB = `https://router.project-osrm.org/route/v1/${profile}/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?${commonQs}`;
           const urlBA = `https://router.project-osrm.org/route/v1/${profile}/${pB.lng},${pB.lat};${pA.lng},${pA.lat}?${commonQs}`;
+
           try {
             const [resAB, resBA] = await Promise.all([
               fetch(urlAB),
@@ -193,10 +197,20 @@ export function SantaMartaMap({
               const closeEnough = distDiff <= 35;
               const similarRatio =
                 Math.max(routeAB.distance, routeBA.distance) /
-                  Math.max(1, Math.min(routeAB.distance, routeBA.distance)) <=
+                  Math.max(
+                    1,
+                    Math.min(
+                      routeAB.distance,
+                      routeBA.distance,
+                    ),
+                  ) <=
                 1.12;
 
-              if (bothReasonable && closeEnough && similarRatio) {
+              if (
+                bothReasonable &&
+                closeEnough &&
+                similarRatio
+              ) {
                 coords = buildCenterline(abCoords, baCoords);
               } else {
                 const chooseAB =
@@ -204,7 +218,10 @@ export function SantaMartaMap({
                 const best = chooseAB ? routeAB : routeBA;
                 const bestReasonable =
                   best.distance <=
-                  Math.max(straightDist * 1.18, straightDist + 25);
+                  Math.max(
+                    straightDist * 1.18,
+                    straightDist + 25,
+                  );
                 if (bestReasonable) {
                   coords = toLatLng(best.geometry.coordinates);
                   if (!chooseAB) coords.reverse();
