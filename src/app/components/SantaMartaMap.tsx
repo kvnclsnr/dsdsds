@@ -8,7 +8,6 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { cn } from "../lib/utils";
 
 // Componente para capturar los clics en el mapa y devolver lat/lng
 function MapClickHandler({
@@ -99,9 +98,8 @@ export function SantaMartaMap({
     }
 
     if (ambosCarriles) {
-      // En ambos carriles no queremos imponer sentido vehicular.
-      // Probamos ambas direcciones y tomamos la más corta; si igual da un rodeo raro,
-      // usamos línea directa entre puntos para mantener el trazo central limpio.
+      // En ambos carriles no queremos "respetar dirección" visualmente:
+      // buscamos la forma de la vía y dibujamos una sola línea central.
       const fetchSegments = async () => {
         const allSegments: [number, number][][] = [];
         let currentSegmentCoords: [number, number][] = [];
@@ -144,8 +142,10 @@ export function SantaMartaMap({
             pB.lng,
           );
 
-          const urlAB = `https://router.project-osrm.org/route/v1/driving/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?geometries=geojson&overview=full`;
-          const urlBA = `https://router.project-osrm.org/route/v1/driving/${pB.lng},${pB.lat};${pA.lng},${pA.lat}?geometries=geojson&overview=full`;
+          const commonQs =
+            "geometries=geojson&overview=full&alternatives=false&steps=false&continue_straight=true";
+          const urlAB = `https://router.project-osrm.org/route/v1/driving/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?${commonQs}`;
+          const urlBA = `https://router.project-osrm.org/route/v1/driving/${pB.lng},${pB.lat};${pA.lng},${pA.lat}?${commonQs}`;
           try {
             const [resAB, resBA] = await Promise.all([
               fetch(urlAB),
@@ -187,16 +187,25 @@ export function SantaMartaMap({
               const bothReasonable =
                 routeAB.distance <= maxAllowedDist &&
                 routeBA.distance <= maxAllowedDist;
-              const closeEnough = distDiff <= 60;
+              const closeEnough = distDiff <= 35;
+              const similarRatio =
+                Math.max(routeAB.distance, routeBA.distance) /
+                  Math.max(1, Math.min(routeAB.distance, routeBA.distance)) <=
+                1.12;
 
-              if (bothReasonable && closeEnough) {
+              if (bothReasonable && closeEnough && similarRatio) {
                 coords = buildCenterline(abCoords, baCoords);
               } else {
                 const chooseAB =
                   routeAB.distance <= routeBA.distance;
                 const best = chooseAB ? routeAB : routeBA;
-                coords = toLatLng(best.geometry.coordinates);
-                if (!chooseAB) coords.reverse();
+                const bestReasonable =
+                  best.distance <=
+                  Math.max(straightDist * 1.18, straightDist + 25);
+                if (bestReasonable) {
+                  coords = toLatLng(best.geometry.coordinates);
+                  if (!chooseAB) coords.reverse();
+                }
               }
             } else if (
               routeAB &&
