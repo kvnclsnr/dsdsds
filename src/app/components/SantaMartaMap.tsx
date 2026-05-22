@@ -1,11 +1,21 @@
-import { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Polyline, Marker, useMapEvents } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
-import { cn } from '../lib/utils';
+import { useEffect, useState } from "react";
+import {
+  MapContainer,
+  TileLayer,
+  Polyline,
+  Marker,
+  useMapEvents,
+} from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import { cn } from "../lib/utils";
 
 // Componente para capturar los clics en el mapa y devolver lat/lng
-function MapClickHandler({ onMapClick }: { onMapClick?: (latlng: {lat: number, lng: number}) => void }) {
+function MapClickHandler({
+  onMapClick,
+}: {
+  onMapClick?: (latlng: { lat: number; lng: number }) => void;
+}) {
   useMapEvents({
     click(e) {
       if (onMapClick) {
@@ -17,18 +27,29 @@ function MapClickHandler({ onMapClick }: { onMapClick?: (latlng: {lat: number, l
 }
 
 interface SantaMartaMapProps {
-  points?: {lat: number, lng: number, disconnected?: boolean}[];
-  onMapClick?: (latlng: {lat: number, lng: number}) => void;
+  points?: {
+    lat: number;
+    lng: number;
+    disconnected?: boolean;
+  }[];
+  onMapClick?: (latlng: { lat: number; lng: number }) => void;
   onPointClick?: (index: number) => void;
   ambosCarriles?: boolean;
 }
 
-export function SantaMartaMap({ points = [], onMapClick, onPointClick, ambosCarriles = false }: SantaMartaMapProps) {
-  const position: [number, number] = [11.2408, -74.1990];
-  const [routeSegments, setRouteSegments] = useState<[number, number][][]>([]);
+export function SantaMartaMap({
+  points = [],
+  onMapClick,
+  onPointClick,
+  ambosCarriles = false,
+}: SantaMartaMapProps) {
+  const position: [number, number] = [11.2408, -74.199];
+  const [routeSegments, setRouteSegments] = useState<
+    [number, number][][]
+  >([]);
 
   useEffect(() => {
-    window.dispatchEvent(new Event('resize'));
+    window.dispatchEvent(new Event("resize"));
   }, []);
 
   // Calcular la ruta siguiendo las calles usando la API pública de OSRM
@@ -39,11 +60,31 @@ export function SantaMartaMap({ points = [], onMapClick, onPointClick, ambosCarr
     }
 
     if (ambosCarriles) {
-      // En ambos carriles no debemos obedecer sentidos de circulación.
-      // Usamos perfil walking para seguir la calle ignorando one-way.
+      // En ambos carriles no queremos imponer sentido vehicular.
+      // Probamos ambas direcciones y tomamos la más corta; si igual da un rodeo raro,
+      // usamos línea directa entre puntos para mantener el trazo central limpio.
       const fetchSegments = async () => {
         const allSegments: [number, number][][] = [];
         let currentSegmentCoords: [number, number][] = [];
+
+        const getStraightDist = (
+          lat1: number,
+          lon1: number,
+          lat2: number,
+          lon2: number,
+        ) => {
+          const R = 6371e3;
+          const p1 = (lat1 * Math.PI) / 180;
+          const p2 = (lat2 * Math.PI) / 180;
+          const dp = ((lat2 - lat1) * Math.PI) / 180;
+          const dl = ((lon2 - lon1) * Math.PI) / 180;
+          const a =
+            Math.sin(dp / 2) ** 2 +
+            Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+          return (
+            R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)))
+          );
+        };
 
         for (let i = 0; i < points.length - 1; i++) {
           const pA = points[i];
@@ -57,30 +98,82 @@ export function SantaMartaMap({ points = [], onMapClick, onPointClick, ambosCarr
             continue;
           }
 
-          const url = `https://router.project-osrm.org/route/v1/walking/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?geometries=geojson&overview=full`;
+          const straightDist = getStraightDist(
+            pA.lat,
+            pA.lng,
+            pB.lat,
+            pB.lng,
+          );
 
+          const urlAB = `https://router.project-osrm.org/route/v1/walking/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?geometries=geojson&overview=full`;
+          const urlBA = `https://router.project-osrm.org/route/v1/walking/${pB.lng},${pB.lat};${pA.lng},${pA.lat}?geometries=geojson&overview=full`;
           try {
-            const res = await fetch(url);
-            const data = await res.json();
+            const [resAB, resBA] = await Promise.all([
+              fetch(urlAB),
+              fetch(urlBA),
+            ]);
+            const [dataAB, dataBA] = await Promise.all([
+              resAB.json(),
+              resBA.json(),
+            ]);
 
-            let coords: [number, number][];
-            if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
-              coords = data.routes[0].geometry.coordinates.map((c: number[]) => [c[1], c[0]]);
-            } else {
-              coords = [[pA.lat, pA.lng], [pB.lat, pB.lng]];
-            }
+            const routeAB =
+              dataAB.code === "Ok" && dataAB.routes?.length > 0
+                ? dataAB.routes[0]
+                : null;
+            const routeBA =
+              dataBA.code === "Ok" && dataBA.routes?.length > 0
+                ? dataBA.routes[0]
+                : null;
 
-            if (currentSegmentCoords.length > 0) {
-              coords.shift();
+            let coords: [number, number][] = [
+              [pA.lat, pA.lng],
+              [pB.lat, pB.lng],
+            ];
+            const maxAllowedDist = Math.max(
+              straightDist * 1.35,
+              straightDist + 35,
+            );
+
+            if (routeAB && routeBA) {
+              const chooseAB =
+                routeAB.distance <= routeBA.distance;
+              const best = chooseAB ? routeAB : routeBA;
+
+              if (best.distance <= maxAllowedDist) {
+                coords = best.geometry.coordinates.map(
+                  (c: number[]) => [c[1], c[0]],
+                );
+                if (!chooseAB) coords.reverse();
+              }
+            } else if (
+              routeAB &&
+              routeAB.distance <= maxAllowedDist
+            ) {
+              coords = routeAB.geometry.coordinates.map(
+                (c: number[]) => [c[1], c[0]],
+              );
+            } else if (
+              routeBA &&
+              routeBA.distance <= maxAllowedDist
+            ) {
+              coords = routeBA.geometry.coordinates
+                .map((c: number[]) => [c[1], c[0]])
+                .reverse();
             }
-            currentSegmentCoords = [...currentSegmentCoords, ...coords];
           } catch (err) {
-            const fallback = [[pA.lat, pA.lng], [pB.lat, pB.lng]] as [number, number][];
-            if (currentSegmentCoords.length > 0) fallback.shift();
-            currentSegmentCoords = [...currentSegmentCoords, ...fallback];
+            const fallback = [
+              [pA.lat, pA.lng],
+              [pB.lat, pB.lng],
+            ] as [number, number][];
+            if (currentSegmentCoords.length > 0)
+              fallback.shift();
+            currentSegmentCoords = [
+              ...currentSegmentCoords,
+              ...fallback,
+            ];
           }
         }
-
         if (currentSegmentCoords.length > 0) {
           allSegments.push(currentSegmentCoords);
         }
@@ -93,25 +186,40 @@ export function SantaMartaMap({ points = [], onMapClick, onPointClick, ambosCarr
       // Pero debemos respetar los cortes (disconnected)
       const fetchNormalSegments = async () => {
         let allSegments: [number, number][][] = [];
-        
-        let currentChunk: {lat: number, lng: number}[] = [points[0]];
+
+        let currentChunk: { lat: number; lng: number }[] = [
+          points[0],
+        ];
         for (let i = 1; i < points.length; i++) {
           if (points[i].disconnected) {
             // Fetch route for chunk
             if (currentChunk.length > 1) {
-              const coordsStr = currentChunk.map(p => `${p.lng},${p.lat}`).join(';');
+              const coordsStr = currentChunk
+                .map((p) => `${p.lng},${p.lat}`)
+                .join(";");
               const url = `https://router.project-osrm.org/route/v1/driving/${coordsStr}?geometries=geojson&overview=full`;
               try {
                 const res = await fetch(url);
                 const data = await res.json();
-                if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
-                  const coords = data.routes[0].geometry.coordinates;
-                  allSegments.push(coords.map((c: number[]) => [c[1], c[0]]));
+                if (
+                  data.code === "Ok" &&
+                  data.routes &&
+                  data.routes.length > 0
+                ) {
+                  const coords =
+                    data.routes[0].geometry.coordinates;
+                  allSegments.push(
+                    coords.map((c: number[]) => [c[1], c[0]]),
+                  );
                 } else {
-                  allSegments.push(currentChunk.map(p => [p.lat, p.lng]));
+                  allSegments.push(
+                    currentChunk.map((p) => [p.lat, p.lng]),
+                  );
                 }
               } catch (e) {
-                allSegments.push(currentChunk.map(p => [p.lat, p.lng]));
+                allSegments.push(
+                  currentChunk.map((p) => [p.lat, p.lng]),
+                );
               }
             }
             currentChunk = [points[i]]; // Inicia un nuevo chunk
@@ -119,28 +227,41 @@ export function SantaMartaMap({ points = [], onMapClick, onPointClick, ambosCarr
             currentChunk.push(points[i]);
           }
         }
-        
+
         // Fetch remaining chunk
         if (currentChunk.length > 1) {
-          const coordsStr = currentChunk.map(p => `${p.lng},${p.lat}`).join(';');
+          const coordsStr = currentChunk
+            .map((p) => `${p.lng},${p.lat}`)
+            .join(";");
           const url = `https://router.project-osrm.org/route/v1/driving/${coordsStr}?geometries=geojson&overview=full`;
           try {
             const res = await fetch(url);
             const data = await res.json();
-            if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
-              const coords = data.routes[0].geometry.coordinates;
-              allSegments.push(coords.map((c: number[]) => [c[1], c[0]]));
+            if (
+              data.code === "Ok" &&
+              data.routes &&
+              data.routes.length > 0
+            ) {
+              const coords =
+                data.routes[0].geometry.coordinates;
+              allSegments.push(
+                coords.map((c: number[]) => [c[1], c[0]]),
+              );
             } else {
-              allSegments.push(currentChunk.map(p => [p.lat, p.lng]));
+              allSegments.push(
+                currentChunk.map((p) => [p.lat, p.lng]),
+              );
             }
           } catch (e) {
-            allSegments.push(currentChunk.map(p => [p.lat, p.lng]));
+            allSegments.push(
+              currentChunk.map((p) => [p.lat, p.lng]),
+            );
           }
         }
-        
+
         setRouteSegments(allSegments);
       };
-      
+
       fetchNormalSegments();
     }
   }, [points, ambosCarriles]);
@@ -148,7 +269,7 @@ export function SantaMartaMap({ points = [], onMapClick, onPointClick, ambosCarr
   // Crear iconos de marcador personalizados con estilo neón
   const createNeonIcon = (index: number) => {
     return L.divIcon({
-      className: 'bg-transparent',
+      className: "bg-transparent",
       html: `<div class="w-8 h-8 -ml-4 -mt-4 rounded-full bg-cyan-500/20 border-2 border-cyan-400 flex items-center justify-center backdrop-blur-md shadow-[0_0_15px_rgba(0,240,255,0.6)] text-white text-xs font-bold cursor-pointer hover:bg-cyan-500/40 transition-colors">${index + 1}</div>`,
       iconSize: [0, 0],
     });
@@ -159,83 +280,95 @@ export function SantaMartaMap({ points = [], onMapClick, onPointClick, ambosCarr
       <MapContainer
         center={position}
         zoom={14}
-        style={{ height: '100%', width: '100%', background: '#03060D' }}
+        style={{
+          height: "100%",
+          width: "100%",
+          background: "#03060D",
+        }}
         zoomControl={false}
         attributionControl={false}
       >
         <MapClickHandler onMapClick={onMapClick} />
-        
+
         {/* Usamos Stadia Alidade Smooth Dark, el mapa indicado originalmente */}
         <TileLayer
           url="https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png"
           className="map-tiles-smooth-dark"
         />
-        
+
         {/* Trazar la ruta (ya sea ruteada por calles o la línea recta inicial/fallback) */}
-        {routeSegments.length > 0 ? (
-          routeSegments.map((segment, idx) => (
-            <Polyline 
-              key={idx}
-              positions={segment} 
-              pathOptions={{ 
-                color: '#00f0ff', 
-                weight: ambosCarriles ? 12 : 6,
-                opacity: ambosCarriles ? 0.6 : 1,
-                lineCap: 'round',
-                lineJoin: 'round',
-                className: "neon-polyline"
-              }} 
-            />
-          ))
-        ) : (
-          // Fallback visual si routeSegments falla pero hay puntos conectados
-          points.length > 1 && (() => {
-            const rawSegments: [number, number][][] = [];
-            let currentChunk: [number, number][] = [[points[0].lat, points[0].lng]];
-            for (let i = 1; i < points.length; i++) {
-              if (points[i].disconnected) {
-                if (currentChunk.length > 1) rawSegments.push(currentChunk);
-                currentChunk = [[points[i].lat, points[i].lng]];
-              } else {
-                currentChunk.push([points[i].lat, points[i].lng]);
-              }
-            }
-            if (currentChunk.length > 1) rawSegments.push(currentChunk);
-            
-            return rawSegments.map((segment, idx) => (
-              <Polyline 
+        {routeSegments.length > 0
+          ? routeSegments.map((segment, idx) => (
+              <Polyline
                 key={idx}
-                positions={segment} 
-                pathOptions={{ 
-                  color: '#00f0ff', 
+                positions={segment}
+                pathOptions={{
+                  color: "#00f0ff",
                   weight: ambosCarriles ? 12 : 6,
                   opacity: ambosCarriles ? 0.6 : 1,
-                  lineCap: 'round',
-                  lineJoin: 'round',
-                  className: "neon-polyline"
-                }} 
+                  lineCap: "round",
+                  lineJoin: "round",
+                  className: "neon-polyline",
+                }}
               />
-            ));
-          })()
-        )}
+            ))
+          : // Fallback visual si routeSegments falla pero hay puntos conectados
+            points.length > 1 &&
+            (() => {
+              const rawSegments: [number, number][][] = [];
+              let currentChunk: [number, number][] = [
+                [points[0].lat, points[0].lng],
+              ];
+              for (let i = 1; i < points.length; i++) {
+                if (points[i].disconnected) {
+                  if (currentChunk.length > 1)
+                    rawSegments.push(currentChunk);
+                  currentChunk = [
+                    [points[i].lat, points[i].lng],
+                  ];
+                } else {
+                  currentChunk.push([
+                    points[i].lat,
+                    points[i].lng,
+                  ]);
+                }
+              }
+              if (currentChunk.length > 1)
+                rawSegments.push(currentChunk);
+
+              return rawSegments.map((segment, idx) => (
+                <Polyline
+                  key={idx}
+                  positions={segment}
+                  pathOptions={{
+                    color: "#00f0ff",
+                    weight: ambosCarriles ? 12 : 6,
+                    opacity: ambosCarriles ? 0.6 : 1,
+                    lineCap: "round",
+                    lineJoin: "round",
+                    className: "neon-polyline",
+                  }}
+                />
+              ));
+            })()}
 
         {/* Marcadores de puntos */}
         {points.map((p, i) => (
-          <Marker 
-            key={i} 
-            position={[p.lat, p.lng]} 
+          <Marker
+            key={i}
+            position={[p.lat, p.lng]}
             icon={createNeonIcon(i)}
             eventHandlers={{
               click: () => {
                 if (onPointClick) onPointClick(i);
-              }
+              },
             }}
           />
         ))}
       </MapContainer>
 
       <div className="absolute inset-0 pointer-events-none z-[400] shadow-[inset_0_0_80px_40px_#03060D]" />
-      
+
       <style>{`
         .map-tiles-smooth-dark {
           /* Ajuste para escala de grises puros y mantener el estilo Liquid Glass */
