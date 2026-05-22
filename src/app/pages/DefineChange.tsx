@@ -190,7 +190,7 @@ export function DefineChange() {
       <div className="fixed bottom-0 w-full max-w-md p-6 bg-gradient-to-t from-black via-black/80 to-transparent pointer-events-none">
         <LiquidButton 
           className="w-full pointer-events-auto shadow-[0_10px_40px_rgba(0,0,0,0.8)]"
-          onClick={() => navigate('/analysis', { state: { analysisName, primaryStreet, selectedType } })}
+          onClick={() => navigate('/analysis', { state: { analysisName, primaryStreet, selectedType, scheduleMode, intervals } })}
         >
           Generar Análisis
           <ArrowRight size={18} />

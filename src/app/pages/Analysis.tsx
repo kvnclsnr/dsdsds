@@ -13,82 +13,97 @@ export function Analysis() {
     : "Av. del Río"; // Default para Santa Marta
   const selectedType = state.selectedType || "Cierre total";
 
-  // Lógica del tráfico dinámica y real
-  const isRestriction = selectedType === "Motos" || selectedType === "Particulares" || selectedType === "Parqueo";
-  
-  // Tráfico base de un día típico en Santa Marta (Medido en Vehículos equivalentes por Hora - veh/h)
+  const scheduleMode = state.scheduleMode || "24h";
+  const intervals = Array.isArray(state.intervals) && state.intervals.length
+    ? state.intervals
+    : [{ from: "07:00", to: "19:00" }];
+
+  const parseTimeToMinutes = (time: string) => {
+    const [h, m] = time.split(":").map(Number);
+    return (h * 60 + m) % 1440;
+  };
+
+  const isInActiveInterval = (time: string) => {
+    if (scheduleMode === "24h") return true;
+    const timeMin = parseTimeToMinutes(time);
+
+    return intervals.some((it: { from: string; to: string }) => {
+      const from = parseTimeToMinutes(it.from);
+      const to = parseTimeToMinutes(it.to);
+      if (from === to) return true;
+      if (from < to) return timeMin >= from && timeMin <= to;
+      return timeMin >= from || timeMin <= to;
+    });
+  };
+
+  // Curva base representativa (veh/h) por franja horaria en Santa Marta.
   const baseTraffic = [
-    { time: "00:00", val: 120 }, // Noche / Vacío
-    { time: "04:00", val: 50 },  // Madrugada
-    { time: "06:00", val: 450 }, // Inicio de jornada
-    { time: "07:30", val: 1350 }, // Pico mañana (trabajo/colegios)
-    { time: "09:30", val: 850 },  // Valle intermedio
-    { time: "12:30", val: 1550 }, // Pico mediodía (muy marcado en la Costa, salida colegios y almuerzo)
-    { time: "15:00", val: 950 },  // Valle tarde
-    { time: "18:30", val: 1650 }, // Pico tarde (retorno a casa)
-    { time: "20:30", val: 800 },  // Noche temprana
-    { time: "22:00", val: 350 },  // Noche
+    { time: "00:00", val: 160 },
+    { time: "04:00", val: 70 },
+    { time: "06:00", val: 520 },
+    { time: "07:30", val: 1480 },
+    { time: "09:30", val: 920 },
+    { time: "12:30", val: 1620 },
+    { time: "15:00", val: 1040 },
+    { time: "18:30", val: 1720 },
+    { time: "20:30", val: 890 },
+    { time: "22:00", val: 420 },
   ];
 
-  let analysisText = "";
-  let peakHourImpact = "";
-  let globalImpact = "";
-  let effectiveness = "";
-  let sideEffects = "";
+  const hourFactors = Object.fromEntries(
+    baseTraffic.map((row) => {
+      const h = parseInt(row.time.slice(0, 2), 10);
+      const isPeak = [7, 8, 12, 18, 19].includes(h);
+      return [row.time, isPeak ? 1.15 : 1];
+    })
+  );
 
-  const data = baseTraffic.map(bt => {
-    let projVal = bt.val;
-    
-    if (selectedType === "Cierre total") {
-      projVal = bt.val + (bt.val * 0.65); // Congestión severa en vías alternas
-      analysisText = `El cierre total en la ${primaryStreet} anulará la capacidad de esta arteria. Al ser Santa Marta una ciudad con conectividad vial muy limitada y grandes embudos (ej. Troncal del Caribe o Carrera 5ta), el tráfico se desviará colapsando las vías alternas. Los tiempos de viaje se duplicarán.`;
-      peakHourImpact = "Aumenta 65%";
-      globalImpact = "Empeora 55%";
-      effectiveness = "Colapso Vial"; 
-      sideEffects = "Se saturan (+65%)";
-    } else if (selectedType === "Cambio sentido") {
-      projVal = bt.val > 1000 ? bt.val * 0.85 : bt.val * 1.05; // Reduce cuellos de botella pesados
-      analysisText = `Convertir la ${primaryStreet} a un único sentido optimizará los tiempos semafóricos y reducirá los conflictos de giro, algo crucial en arterias estrechas del Distrito. Disminuye los embotellamientos pico, aunque recarga ligeramente el par vial paralelo.`;
-      peakHourImpact = "Disminuye 15%";
-      globalImpact = "Mejora 10%";
-      effectiveness = "Flujo Aceptable";
-      sideEffects = "Suben leve (+10%)";
-    } else if (selectedType === "Motos") {
-      projVal = bt.val * 0.55; // Reducción masiva (las motos son más de la mitad del parque automotor)
-      analysisText = `En Santa Marta, las motocicletas representan más del 55% del parque automotor. Restringirlas en la ${primaryStreet} eliminaría la mayor fuente de fricción lateral y siniestralidad, logrando una fluidez constante casi ideal para el transporte público.`;
-      peakHourImpact = "Disminuye 45%";
-      globalImpact = "Mejora 35%";
-      effectiveness = "Excelente Fluidez";
-      sideEffects = "Mejoran también (-15%)";
-    } else if (selectedType === "Particulares") {
-      projVal = bt.val > 1000 ? bt.val * 0.70 : bt.val * 0.85;
-      analysisText = `Extender el 'Pico y Placa' para vehículos particulares en la ${primaryStreet} aliviará la carga estructural en horas críticas (07:30, 12:30 y 18:30). Fomentará el uso del transporte público y reducirá las colas en las glorietas e intersecciones principales.`;
-      peakHourImpact = "Disminuye 30%";
-      globalImpact = "Mejora 20%";
-      effectiveness = "Buena Fluidez";
-      sideEffects = "Leve mejora (-5%)";
-    } else if (selectedType === "Parqueo") {
-      projVal = bt.val * 0.75;
-      analysisText = `La invasión del espacio público es uno de los mayores problemas viales en Santa Marta (especialmente en Centro Histórico y Mercado). Prohibir y controlar el parqueo en la ${primaryStreet} recuperará la capacidad de carril y eliminará frenados bruscos.`;
-      peakHourImpact = "Disminuye 25%";
-      globalImpact = "Mejora 25%";
-      effectiveness = "Flujo Constante";
-      sideEffects = "Se congestionan (+15%)";
-    } else {
-      projVal = bt.val;
-      analysisText = `El cambio propuesto en la ${primaryStreet} generará modificaciones en los patrones de movilidad locales, requiere un análisis de micro-simulación detallado.`;
-      peakHourImpact = "Sin cambios";
-      globalImpact = "Igual al actual";
-      effectiveness = "Flujo Normal";
-      sideEffects = "Sin impacto";
-    }
+  const impactByType: Record<string, { active: number; inactive: number; effect: string; side: string }> = {
+    "Cierre total": { active: 0.62, inactive: 0.12, effect: "Colapso Vial", side: "Se saturan (+40%)" },
+    "Cambio sentido": { active: -0.14, inactive: 0.03, effect: "Flujo Aceptable", side: "Suben leve (+8%)" },
+    Motos: { active: -0.28, inactive: -0.08, effect: "Mejora Moderada", side: "Mejora parcial (-6%)" },
+    Particulares: { active: -0.2, inactive: -0.05, effect: "Buena Fluidez", side: "Leve mejora (-4%)" },
+    Parqueo: { active: -0.18, inactive: -0.04, effect: "Flujo Constante", side: "Mejora parcial (-3%)" },
+  };
+
+  const selectedImpact = impactByType[selectedType] || { active: 0, inactive: 0, effect: "Flujo Normal", side: "Sin impacto" };
+
+  const data = baseTraffic.map((bt) => {
+    const active = isInActiveInterval(bt.time);
+    const factor = hourFactors[bt.time] ?? 1;
+    const impact = (active ? selectedImpact.active : selectedImpact.inactive) * factor;
+    const projVal = Math.max(0, bt.val * (1 + impact));
 
     return {
       time: bt.time,
       base: bt.val,
-      proj: Math.round(projVal)
+      proj: Math.round(projVal),
+      active,
     };
   });
+
+  const totalBase = data.reduce((acc, d) => acc + d.base, 0);
+  const totalProj = data.reduce((acc, d) => acc + d.proj, 0);
+  const globalChangePct = ((totalProj - totalBase) / totalBase) * 100;
+  const peakData = data.find((d) => d.time === "18:30") || data[data.length - 1];
+  const peakChangePct = ((peakData.proj - peakData.base) / peakData.base) * 100;
+
+  const formatImpact = (pct: number, positiveIsWorse = true) => {
+    const abs = Math.abs(pct).toFixed(1);
+    if (Math.abs(pct) < 0.5) return "Sin cambios";
+    if ((positiveIsWorse && pct > 0) || (!positiveIsWorse && pct < 0)) return `Aumenta ${abs}%`;
+    return `Disminuye ${abs}%`;
+  };
+
+  const globalImpact = globalChangePct <= -1 ? `Mejora ${Math.abs(globalChangePct).toFixed(1)}%` : globalChangePct >= 1 ? `Empeora ${globalChangePct.toFixed(1)}%` : "Igual al actual";
+  const peakHourImpact = formatImpact(peakChangePct, true);
+  const effectiveness = selectedImpact.effect;
+  const sideEffects = selectedImpact.side;
+
+  const coveragePct = scheduleMode === "24h" ? 100 : Math.round((data.filter((d) => d.active).length / data.length) * 100);
+  const confidence = Math.max(45, Math.min(88, 60 + (scheduleMode === "24h" ? 15 : 5) + (coveragePct > 50 ? 8 : 0)));
+
+  const analysisText = `El resultado usa una proyección horaria por tramos (00:00–22:00) con mayor peso en horas pico de Santa Marta (07:30, 12:30 y 18:30). Para el cambio '${selectedType}' en ${primaryStreet}, el modelo estima ${globalImpact.toLowerCase()} y ${peakHourImpact.toLowerCase()} en hora crítica. Con cobertura activa del ${coveragePct}% del día, la confiabilidad técnica actual es ${confidence}%. Para acercarse a una confiabilidad operativa >95%, se recomienda calibrar con aforos reales por carril, tiempos semafóricos y velocidad GPS por día laboral/festivo.`;
 
   // SVG Chart Calculations - Ajustado para ser más grande y legible
   const svgWidth = 600;
