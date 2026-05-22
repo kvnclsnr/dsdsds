@@ -48,6 +48,45 @@ export function SantaMartaMap({
     [number, number][][]
   >([]);
 
+  const toLatLng = (coords: number[][]): [number, number][] =>
+    coords.map((c: number[]) => [c[1], c[0]]);
+
+  const interpolateRoute = (
+    route: [number, number][],
+    targetLen: number,
+  ): [number, number][] => {
+    if (route.length <= 1 || targetLen <= 1) return route;
+    const out: [number, number][] = [];
+    const last = route.length - 1;
+    for (let i = 0; i < targetLen; i++) {
+      const t = (i / (targetLen - 1)) * last;
+      const idx = Math.floor(t);
+      const frac = t - idx;
+      const p1 = route[idx];
+      const p2 = route[Math.min(idx + 1, last)];
+      out.push([
+        p1[0] + (p2[0] - p1[0]) * frac,
+        p1[1] + (p2[1] - p1[1]) * frac,
+      ]);
+    }
+    return out;
+  };
+
+  const buildCenterline = (
+    routeAB: [number, number][],
+    routeBA: [number, number][],
+  ): [number, number][] => {
+    const baForward = [...routeBA].reverse();
+    const targetLen = Math.max(routeAB.length, baForward.length);
+    const abNorm = interpolateRoute(routeAB, targetLen);
+    const baNorm = interpolateRoute(baForward, targetLen);
+
+    return abNorm.map((p, i) => [
+      (p[0] + baNorm[i][0]) / 2,
+      (p[1] + baNorm[i][1]) / 2,
+    ]);
+  };
+
   useEffect(() => {
     window.dispatchEvent(new Event("resize"));
   }, []);
@@ -105,8 +144,8 @@ export function SantaMartaMap({
             pB.lng,
           );
 
-          const urlAB = `https://router.project-osrm.org/route/v1/walking/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?geometries=geojson&overview=full`;
-          const urlBA = `https://router.project-osrm.org/route/v1/walking/${pB.lng},${pB.lat};${pA.lng},${pA.lat}?geometries=geojson&overview=full`;
+          const urlAB = `https://router.project-osrm.org/route/v1/driving/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?geometries=geojson&overview=full`;
+          const urlBA = `https://router.project-osrm.org/route/v1/driving/${pB.lng},${pB.lat};${pA.lng},${pA.lat}?geometries=geojson&overview=full`;
           try {
             const [resAB, resBA] = await Promise.all([
               fetch(urlAB),
@@ -136,31 +175,51 @@ export function SantaMartaMap({
             );
 
             if (routeAB && routeBA) {
-              const chooseAB =
-                routeAB.distance <= routeBA.distance;
-              const best = chooseAB ? routeAB : routeBA;
+              const distDiff = Math.abs(
+                routeAB.distance - routeBA.distance,
+              );
+              const abCoords = toLatLng(
+                routeAB.geometry.coordinates,
+              );
+              const baCoords = toLatLng(
+                routeBA.geometry.coordinates,
+              );
+              const bothReasonable =
+                routeAB.distance <= maxAllowedDist &&
+                routeBA.distance <= maxAllowedDist;
+              const closeEnough = distDiff <= 60;
 
-              if (best.distance <= maxAllowedDist) {
-                coords = best.geometry.coordinates.map(
-                  (c: number[]) => [c[1], c[0]],
-                );
+              if (bothReasonable && closeEnough) {
+                coords = buildCenterline(abCoords, baCoords);
+              } else {
+                const chooseAB =
+                  routeAB.distance <= routeBA.distance;
+                const best = chooseAB ? routeAB : routeBA;
+                coords = toLatLng(best.geometry.coordinates);
                 if (!chooseAB) coords.reverse();
               }
             } else if (
               routeAB &&
               routeAB.distance <= maxAllowedDist
             ) {
-              coords = routeAB.geometry.coordinates.map(
-                (c: number[]) => [c[1], c[0]],
-              );
+              coords = toLatLng(routeAB.geometry.coordinates);
             } else if (
               routeBA &&
               routeBA.distance <= maxAllowedDist
             ) {
-              coords = routeBA.geometry.coordinates
-                .map((c: number[]) => [c[1], c[0]])
-                .reverse();
+              coords = toLatLng(
+                routeBA.geometry.coordinates,
+              ).reverse();
             }
+
+            const segmentToAppend =
+              currentSegmentCoords.length > 0
+                ? coords.slice(1)
+                : coords;
+            currentSegmentCoords = [
+              ...currentSegmentCoords,
+              ...segmentToAppend,
+            ];
           } catch (err) {
             const fallback = [
               [pA.lat, pA.lng],
