@@ -39,93 +39,54 @@ export function SantaMartaMap({ points = [], onMapClick, onPointClick, ambosCarr
     }
 
     if (ambosCarriles) {
-      // En modo ambos carriles necesitamos la geometría real de la calle PERO 
-      // evitando los bucles/retornos cuando los puntos caen en carriles opuestos.
+      // En ambos carriles no debemos obedecer sentidos de circulación.
+      // Usamos perfil walking para seguir la calle ignorando one-way.
       const fetchSegments = async () => {
-        let allSegments: [number, number][][] = [];
+        const allSegments: [number, number][][] = [];
         let currentSegmentCoords: [number, number][] = [];
-        
-        // Función para calcular distancia en línea recta (Haversine)
-        const getStraightDist = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-          const R = 6371e3;
-          const p1 = lat1 * Math.PI / 180;
-          const p2 = lat2 * Math.PI / 180;
-          const dp = (lat2 - lat1) * Math.PI / 180;
-          const dl = (lon2 - lon1) * Math.PI / 180;
-          const a = Math.sin(dp/2) * Math.sin(dp/2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2) * Math.sin(dl/2);
-          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-          return R * c;
-        };
-        
+
         for (let i = 0; i < points.length - 1; i++) {
           const pA = points[i];
           const pB = points[i + 1];
-          
+
           if (pB.disconnected) {
-            // Se corta el trazo continuo
             if (currentSegmentCoords.length > 0) {
               allSegments.push([...currentSegmentCoords]);
             }
             currentSegmentCoords = [];
-            continue; // No conectamos pA con pB
+            continue;
           }
-          
-          const straightDist = getStraightDist(pA.lat, pA.lng, pB.lat, pB.lng);
-          
-          const urlDir1 = `https://router.project-osrm.org/route/v1/driving/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?geometries=geojson&overview=full`;
-          const urlDir2 = `https://router.project-osrm.org/route/v1/driving/${pB.lng},${pB.lat};${pA.lng},${pA.lat}?geometries=geojson&overview=full`;
-          
+
+          const url = `https://router.project-osrm.org/route/v1/walking/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?geometries=geojson&overview=full`;
+
           try {
-            const [res1, res2] = await Promise.all([
-              fetch(urlDir1).then(r => r.json()), 
-              fetch(urlDir2).then(r => r.json())
-            ]);
-            
-            let route1 = (res1.code === 'Ok' && res1.routes) ? res1.routes[0] : null;
-            let route2 = (res2.code === 'Ok' && res2.routes) ? res2.routes[0] : null;
-            
-            const maxAllowedDist = Math.max(straightDist * 2.0, straightDist + 200);
-            
-            let r1Valid = route1 && route1.distance <= maxAllowedDist;
-            let r2Valid = route2 && route2.distance <= maxAllowedDist;
-            
-            let bestCoords: [number, number][] = [];
-            
-            if (r1Valid && r2Valid) {
-              if (route1.distance <= route2.distance) {
-                bestCoords = route1.geometry.coordinates.map((c: number[]) => [c[1], c[0]]);
-              } else {
-                bestCoords = route2.geometry.coordinates.map((c: number[]) => [c[1], c[0]]).reverse();
-              }
-            } else if (r1Valid) {
-              bestCoords = route1.geometry.coordinates.map((c: number[]) => [c[1], c[0]]);
-            } else if (r2Valid) {
-              bestCoords = route2.geometry.coordinates.map((c: number[]) => [c[1], c[0]]).reverse();
+            const res = await fetch(url);
+            const data = await res.json();
+
+            let coords: [number, number][];
+            if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+              coords = data.routes[0].geometry.coordinates.map((c: number[]) => [c[1], c[0]]);
             } else {
-              bestCoords = [[pA.lat, pA.lng], [pB.lat, pB.lng]];
+              coords = [[pA.lat, pA.lng], [pB.lat, pB.lng]];
             }
-            
-            // Ya NO desplazamos los puntos para evitar los triángulos y picos feos (cosas raras).
-            // Simplemente usamos la geometría fluida de OSRM tal cual, para un trazo limpio.
-            if (bestCoords.length > 0) {
-              if (currentSegmentCoords.length > 0) {
-                bestCoords.shift(); // Evitamos duplicar el punto de conexión
-              }
-              currentSegmentCoords = [...currentSegmentCoords, ...bestCoords];
+
+            if (currentSegmentCoords.length > 0) {
+              coords.shift();
             }
-            
+            currentSegmentCoords = [...currentSegmentCoords, ...coords];
           } catch (err) {
             const fallback = [[pA.lat, pA.lng], [pB.lat, pB.lng]] as [number, number][];
             if (currentSegmentCoords.length > 0) fallback.shift();
             currentSegmentCoords = [...currentSegmentCoords, ...fallback];
           }
         }
+
         if (currentSegmentCoords.length > 0) {
           allSegments.push(currentSegmentCoords);
         }
         setRouteSegments(allSegments);
       };
-      
+
       fetchSegments();
     } else {
       // Rutina normal para un solo carril (respeta sentidos con perfil driving)
