@@ -201,29 +201,34 @@ export function SantaMartaMap({
 
           const commonQs =
             "geometries=geojson&overview=full&alternatives=false&steps=false";
-          // En modo ambos carriles consultamos driving en ambos sentidos
-          // para capturar cada calzada y luego calcular una línea media estable.
-          const profile = "driving";
-          const urlAB = `https://router.project-osrm.org/route/v1/${profile}/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?${commonQs}`;
-          const urlBA = `https://router.project-osrm.org/route/v1/${profile}/${pB.lng},${pB.lat};${pA.lng},${pA.lat}?${commonQs}`;
+          // driving nos da cada calzada por sentido; foot ignora one-way y mantiene forma de calle.
+          const urlABDriving = `https://router.project-osrm.org/route/v1/driving/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?${commonQs}`;
+          const urlBADriving = `https://router.project-osrm.org/route/v1/driving/${pB.lng},${pB.lat};${pA.lng},${pA.lat}?${commonQs}`;
+          const urlABFoot = `https://router.project-osrm.org/route/v1/foot/${pA.lng},${pA.lat};${pB.lng},${pB.lat}?${commonQs}`;
 
           try {
-            const [resAB, resBA] = await Promise.all([
-              fetch(urlAB),
-              fetch(urlBA),
+            const [resABDriving, resBADriving, resABFoot] = await Promise.all([
+              fetch(urlABDriving),
+              fetch(urlBADriving),
+              fetch(urlABFoot),
             ]);
-            const [dataAB, dataBA] = await Promise.all([
-              resAB.json(),
-              resBA.json(),
+            const [dataABDriving, dataBADriving, dataABFoot] = await Promise.all([
+              resABDriving.json(),
+              resBADriving.json(),
+              resABFoot.json(),
             ]);
 
             const routeAB =
-              dataAB.code === "Ok" && dataAB.routes?.length > 0
-                ? dataAB.routes[0]
+              dataABDriving.code === "Ok" && dataABDriving.routes?.length > 0
+                ? dataABDriving.routes[0]
                 : null;
             const routeBA =
-              dataBA.code === "Ok" && dataBA.routes?.length > 0
-                ? dataBA.routes[0]
+              dataBADriving.code === "Ok" && dataBADriving.routes?.length > 0
+                ? dataBADriving.routes[0]
+                : null;
+            const routeFoot =
+              dataABFoot.code === "Ok" && dataABFoot.routes?.length > 0
+                ? dataABFoot.routes[0]
                 : null;
 
             let coords: [number, number][] = [
@@ -271,7 +276,13 @@ export function SantaMartaMap({
                   baCoords,
                   straightDist,
                 );
-                coords = centerIsStable ? centerline : abCoords;
+                coords = centerIsStable
+                  ? centerline
+                  : routeFoot
+                    ? toLatLng(routeFoot.geometry.coordinates)
+                    : abCoords;
+              } else if (routeFoot) {
+                coords = toLatLng(routeFoot.geometry.coordinates);
               } else {
                 const chooseAB =
                   routeAB.distance <= routeBA.distance;
@@ -279,6 +290,8 @@ export function SantaMartaMap({
                 coords = toLatLng(best.geometry.coordinates);
                 if (!chooseAB) coords.reverse();
               }
+            } else if (routeFoot) {
+              coords = toLatLng(routeFoot.geometry.coordinates);
             } else if (routeAB) {
               coords = toLatLng(routeAB.geometry.coordinates);
             } else if (routeBA) {
